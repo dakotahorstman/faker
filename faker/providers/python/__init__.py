@@ -149,9 +149,9 @@ class Provider(BaseProvider):
         max_value: Optional[Union[float, int]] = None,
     ) -> float:
         if left_digits is not None and left_digits < 0:
-            raise ValueError("A float number cannot have less than 0 digits in its " "integer part")
+            raise ValueError("A float number cannot have less than 0 digits in its integer part")
         if right_digits is not None and right_digits < 0:
-            raise ValueError("A float number cannot have less than 0 digits in its " "fractional part")
+            raise ValueError("A float number cannot have less than 0 digits in its fractional part")
         if left_digits == 0 and right_digits == 0:
             raise ValueError("A float number cannot have less than 0 digits in total")
         if min_value is not None and max_value is not None:
@@ -165,26 +165,26 @@ class Provider(BaseProvider):
             raise ValueError("Max value must fit within left digits")
         if left_digits is not None and min_value and math.ceil(math.log10(abs(min_value))) > left_digits:
             raise ValueError("Min value must fit within left digits")
-
+    
         # Make sure at least either left or right is set
         if left_digits is None and right_digits is None:
             needed_left_digits = max(1, math.ceil(math.log10(max(abs(max_value or 1), abs(min_value or 1)))))
             right_digits = self.random_int(1, sys.float_info.dig - needed_left_digits)
-
+    
         # If only one side is set, choose #digits for other side
         if (left_digits is None) ^ (right_digits is None):
             if left_digits is None:
                 left_digits = max(1, sys.float_info.dig - right_digits)
             else:
                 right_digits = max(1, sys.float_info.dig - left_digits)
-
+    
         # Make sure we don't ask for too many digits!
         if left_digits + right_digits > sys.float_info.dig:
             raise ValueError(
                 f"Asking for too many digits ({left_digits} + {right_digits} == {left_digits + right_digits} > "
                 f"{sys.float_info.dig})",
             )
-
+    
         sign = ""
         if (min_value is not None) or (max_value is not None):
             # Copy values to ensure we're not modifying the original values and thus going out of bounds
@@ -196,7 +196,7 @@ class Provider(BaseProvider):
                     left_max_value = 10**left_digits  # minus smallest representable, adjusted later
                 if min_value is None:
                     left_min_value = -(10**left_digits)  # plus smallest representable, adjusted later
-
+    
             if max_value is not None and max_value < 0:
                 left_max_value += 1  # as the random_int will be generated up to max_value - 1
             if min_value is not None and min_value < 0:
@@ -213,55 +213,64 @@ class Provider(BaseProvider):
                 sign = "+"
             else:
                 sign = "-"
-
+    
             left_number = self.random_number(left_digits)
-
+    
         result = float(f"{sign}{left_number}.{self.random_number(right_digits)}")
         if positive and result == 0:
             if right_digits:
                 result = float("0." + "0" * (right_digits - 1) + "1")
             else:
                 result += sys.float_info.epsilon
-
+    
         if right_digits:
             result = min(result, 10**left_digits - float(f'0.{"0" * (right_digits - 1)}1'))
             result = max(result, -(10**left_digits + float(f'0.{"0" * (right_digits - 1)}1')))
         else:
             result = min(result, 10**left_digits - 1)
             result = max(result, -(10**left_digits + 1))
-
+    
         # It's possible for the result to end up > than max_value or < than min_value
         # When this happens we introduce some variance so we're not always the exactly the min_value or max_value.
         # Which can happen a lot depending on the difference of the values.
         # Ensure the variance is bound by the difference between the max and min
         if max_value is not None:
             if result > max_value:
-                result = result - (result - max_value + self.generator.random.uniform(0, max_value - min_value))
+                if min_value is not None:
+                    result = result - (result - max_value + self.generator.random.uniform(0, max_value - min_value))
+                else:
+                    result = max_value
         if min_value is not None:
             if result < min_value:
-                result = result + (min_value - result + self.generator.random.uniform(0, max_value - min_value))
-
+                if max_value is not None:
+                    result = result + (min_value - result + self.generator.random.uniform(0, max_value - min_value))
+                else:
+                    result = min_value
+    
         return result
 
-    def _safe_random_int(self, min_value: float, max_value: float, positive: bool) -> int:
+    def _safe_random_int(self, min_value: float, max_value: float, positive: bool, retry: int = 0) -> int:
         orig_min_value = min_value
         orig_max_value = max_value
-
+    
         if min_value is None:
             min_value = max_value - self.random_int()
         if max_value is None:
             max_value = min_value + self.random_int()
         if positive:
             min_value = max(min_value, 0)
-
+    
         if min_value == max_value:
-            return self._safe_random_int(orig_min_value, orig_max_value, positive)
-        else:
-            min_value = int(min_value)
-            max_value = int(max_value - 1)
-            if max_value < min_value:
-                max_value += 1
-            return self.random_int(min_value, max_value)
+            if retry >= 10:
+                return int(min_value)  # Directly return min_value (or max_value since they are equal) to avoid recursion
+            else:
+                return self._safe_random_int(orig_min_value, orig_max_value, positive, retry + 1)
+    
+        min_value = int(min_value)
+        max_value = int(max_value - 1)
+        if max_value < min_value:
+            max_value += 1
+        return self.random_int(min_value, max_value)
 
     def pyint(self, min_value: int = 0, max_value: int = 9999, step: int = 1) -> int:
         return self.generator.random_int(min_value, max_value, step=step)
